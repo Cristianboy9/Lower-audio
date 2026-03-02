@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio Editor -2dB</title>
+<style>
+body{
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg,#1e1e2f,#2b2b45);
+    color:white;
+    text-align:center;
+    padding:40px;
+}
+.container{
+    background:#2f2f55;
+    padding:30px;
+    border-radius:15px;
+    max-width:500px;
+    margin:auto;
+    box-shadow:0 0 25px rgba(0,0,0,0.5);
+}
+input{
+    margin:20px 0;
+}
+button{
+    background:#628ED9;
+    border:none;
+    padding:10px 20px;
+    border-radius:10px;
+    color:white;
+    font-size:16px;
+    cursor:pointer;
+}
+button:hover{
+    background:#97AAEC;
+}
+a{
+    color:white;
+    text-decoration:none;
+    font-weight:bold;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🎧 Convert Audio to -2 dB</h2>
+    <input type="file" id="audioFile" accept="audio/*"><br>
+    <button onclick="processAudio()">Process Audio</button>
+    <br><br>
+    <a id="downloadLink" style="display:none;"></a>
+</div>
+
+<script>
+async function processAudio(){
+    const fileInput = document.getElementById("audioFile");
+    const file = fileInput.files[0];
+    if(!file) return alert("Please upload a file first.");
+
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const arrayBuffer = await file.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    // Find current peak level
+    let max = 0;
+    for(let channel = 0; channel < audioBuffer.numberOfChannels; channel++){
+        const data = audioBuffer.getChannelData(channel);
+        for(let i = 0; i < data.length; i++){
+            max = Math.max(max, Math.abs(data[i]));
+        }
+    }
+
+    // Convert -2 dB to linear scale
+    const targetDb = -2;
+    const targetLinear = Math.pow(10, targetDb/20);
+
+    const gainValue = targetLinear / max;
+
+    // Create new adjusted buffer
+    const newBuffer = audioContext.createBuffer(
+        audioBuffer.numberOfChannels,
+        audioBuffer.length,
+        audioBuffer.sampleRate
+    );
+
+    for(let channel = 0; channel < audioBuffer.numberOfChannels; channel++){
+        const oldData = audioBuffer.getChannelData(channel);
+        const newData = newBuffer.getChannelData(channel);
+        for(let i = 0; i < oldData.length; i++){
+            newData[i] = oldData[i] * gainValue;
+        }
+    }
+
+    // Convert to WAV
+    const wavBlob = bufferToWave(newBuffer, newBuffer.length);
+    const url = URL.createObjectURL(wavBlob);
+
+    const downloadLink = document.getElementById("downloadLink");
+    downloadLink.href = url;
+    downloadLink.download = "audio_-2dB.wav";
+    downloadLink.style.display = "block";
+    downloadLink.innerText = "⬇ Download -2dB Audio";
+}
+
+function bufferToWave(abuffer, len) {
+    const numOfChan = abuffer.numberOfChannels,
+        length = len * numOfChan * 2 + 44,
+        buffer = new ArrayBuffer(length),
+        view = new DataView(buffer),
+        channels = [],
+        sampleRate = abuffer.sampleRate;
+    let offset = 0;
+    let pos = 0;
+
+    function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+    function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+    setUint32(0x46464952);
+    setUint32(length - 8);
+    setUint32(0x45564157);
+
+    setUint32(0x20746d66);
+    setUint32(16);
+    setUint16(1);
+    setUint16(numOfChan);
+    setUint32(sampleRate);
+    setUint32(sampleRate * 2 * numOfChan);
+    setUint16(numOfChan * 2);
+    setUint16(16);
+
+    setUint32(0x61746164);
+    setUint32(length - pos - 4);
+
+    for (let i = 0; i < abuffer.numberOfChannels; i++)
+        channels.push(abuffer.getChannelData(i));
+
+    while (pos < length) {
+        for (let i = 0; i < numOfChan; i++) {
+            let sample = Math.max(-1, Math.min(1, channels[i][offset]));
+            sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            view.setInt16(pos, sample, true);
+            pos += 2;
+        }
+        offset++;
+    }
+
+    return new Blob([buffer], { type: "audio/wav" });
+}
+</script>
+
+</body>
+</html>
