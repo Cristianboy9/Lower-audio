@@ -3,11 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Audio Editor -2dB MP3</title>
+<title>Audio Normalizer -2dB</title>
+
+<!-- MP3 Encoder -->
 <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
+
 <style>
 body{
-    font-family: Arial;
+    font-family: Arial, sans-serif;
     background:#1e1e2f;
     color:white;
     text-align:center;
@@ -27,6 +30,15 @@ button{
     border-radius:10px;
     color:white;
     cursor:pointer;
+    font-size:16px;
+}
+button:hover{
+    background:#97AAEC;
+}
+a{
+    color:white;
+    font-weight:bold;
+    text-decoration:none;
 }
 </style>
 </head>
@@ -34,61 +46,76 @@ button{
 
 <div class="container">
 <h2>🎧 Normalize Audio to -2 dB (MP3 Output)</h2>
+
 <input type="file" id="audioFile" accept="audio/*"><br><br>
-<button onclick="processAudio()">Process</button>
+
+<button onclick="processAudio()">Process Audio</button>
+
 <br><br>
-<a id="downloadLink" style="display:none;color:white;font-weight:bold;"></a>
+
+<a id="downloadLink" style="display:none;"></a>
+
 </div>
 
 <script>
 async function processAudio(){
+
     const file = document.getElementById("audioFile").files[0];
-    if(!file) return alert("Upload a file first.");
+    if(!file) return alert("Please upload an audio file first.");
 
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const arrayBuffer = await file.arrayBuffer();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
+    // Find current peak
     let max = 0;
-    for(let c=0;c<audioBuffer.numberOfChannels;c++){
-        let data = audioBuffer.getChannelData(c);
-        for(let i=0;i<data.length;i++){
+    for(let c = 0; c < audioBuffer.numberOfChannels; c++){
+        const data = audioBuffer.getChannelData(c);
+        for(let i = 0; i < data.length; i++){
             max = Math.max(max, Math.abs(data[i]));
         }
     }
 
-    const targetLinear = Math.pow(10, -2/20);
+    // Convert -2 dB to linear scale
+    const targetLinear = Math.pow(10, -2 / 20);
     const gainValue = targetLinear / max;
 
-    let samples = audioBuffer.getChannelData(0);
-    let mp3encoder = new lamejs.Mp3Encoder(1, audioBuffer.sampleRate, 192);
+    // Use first channel (mono encoding for simplicity)
+    const samples = audioBuffer.getChannelData(0);
 
-    let mp3Data = [];
-    let blockSize = 1152;
+    const mp3encoder = new lamejs.Mp3Encoder(
+        1,
+        audioBuffer.sampleRate,
+        192 // bitrate kbps
+    );
 
-    for(let i=0;i<samples.length;i+=blockSize){
-        let chunk = samples.subarray(i, i+blockSize);
-        let adjusted = new Int16Array(chunk.length);
+    const mp3Data = [];
+    const blockSize = 1152;
 
-        for(let j=0;j<chunk.length;j++){
+    for(let i = 0; i < samples.length; i += blockSize){
+
+        const chunk = samples.subarray(i, i + blockSize);
+        const adjusted = new Int16Array(chunk.length);
+
+        for(let j = 0; j < chunk.length; j++){
             let s = chunk[j] * gainValue;
             s = Math.max(-1, Math.min(1, s));
             adjusted[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
 
-        let mp3buf = mp3encoder.encodeBuffer(adjusted);
+        const mp3buf = mp3encoder.encodeBuffer(adjusted);
         if(mp3buf.length > 0) mp3Data.push(mp3buf);
     }
 
-    let end = mp3encoder.flush();
+    const end = mp3encoder.flush();
     if(end.length > 0) mp3Data.push(end);
 
-    let blob = new Blob(mp3Data, {type: 'audio/mp3'});
-    let url = URL.createObjectURL(blob);
+    const blob = new Blob(mp3Data, {type: 'audio/mp3'});
+    const url = URL.createObjectURL(blob);
 
-    let link = document.getElementById("downloadLink");
+    const link = document.getElementById("downloadLink");
     link.href = url;
-    link.download = "audio_-2dB.mp3";
+    link.download = "normalized_-2dB.mp3";
     link.style.display = "block";
     link.innerText = "⬇ Download MP3 (-2 dB)";
 }
