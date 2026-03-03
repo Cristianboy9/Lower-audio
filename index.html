@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Audio Editor -2dB</title>
+<title>Audio Editor -2dB MP3</title>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
 <style>
 body{
-    font-family: Arial, sans-serif;
-    background: linear-gradient(135deg,#1e1e2f,#2b2b45);
+    font-family: Arial;
+    background:#1e1e2f;
     color:white;
     text-align:center;
     padding:40px;
@@ -18,10 +19,6 @@ body{
     border-radius:15px;
     max-width:500px;
     margin:auto;
-    box-shadow:0 0 25px rgba(0,0,0,0.5);
-}
-input{
-    margin:20px 0;
 }
 button{
     background:#628ED9;
@@ -29,123 +26,71 @@ button{
     padding:10px 20px;
     border-radius:10px;
     color:white;
-    font-size:16px;
     cursor:pointer;
-}
-button:hover{
-    background:#97AAEC;
-}
-a{
-    color:white;
-    text-decoration:none;
-    font-weight:bold;
 }
 </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>🎧 Convert Audio to -2 dB</h2>
-    <input type="file" id="audioFile" accept="audio/*"><br>
-    <button onclick="processAudio()">Process Audio</button>
-    <br><br>
-    <a id="downloadLink" style="display:none;"></a>
+<h2>🎧 Normalize Audio to -2 dB (MP3 Output)</h2>
+<input type="file" id="audioFile" accept="audio/*"><br><br>
+<button onclick="processAudio()">Process</button>
+<br><br>
+<a id="downloadLink" style="display:none;color:white;font-weight:bold;"></a>
 </div>
 
 <script>
 async function processAudio(){
-    const fileInput = document.getElementById("audioFile");
-    const file = fileInput.files[0];
-    if(!file) return alert("Please upload a file first.");
+    const file = document.getElementById("audioFile").files[0];
+    if(!file) return alert("Upload a file first.");
 
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const arrayBuffer = await file.arrayBuffer();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-    // Find current peak level
     let max = 0;
-    for(let channel = 0; channel < audioBuffer.numberOfChannels; channel++){
-        const data = audioBuffer.getChannelData(channel);
-        for(let i = 0; i < data.length; i++){
+    for(let c=0;c<audioBuffer.numberOfChannels;c++){
+        let data = audioBuffer.getChannelData(c);
+        for(let i=0;i<data.length;i++){
             max = Math.max(max, Math.abs(data[i]));
         }
     }
 
-    // Convert -2 dB to linear scale
-    const targetDb = -2;
-    const targetLinear = Math.pow(10, targetDb/20);
-
+    const targetLinear = Math.pow(10, -2/20);
     const gainValue = targetLinear / max;
 
-    // Create new adjusted buffer
-    const newBuffer = audioContext.createBuffer(
-        audioBuffer.numberOfChannels,
-        audioBuffer.length,
-        audioBuffer.sampleRate
-    );
+    let samples = audioBuffer.getChannelData(0);
+    let mp3encoder = new lamejs.Mp3Encoder(1, audioBuffer.sampleRate, 192);
 
-    for(let channel = 0; channel < audioBuffer.numberOfChannels; channel++){
-        const oldData = audioBuffer.getChannelData(channel);
-        const newData = newBuffer.getChannelData(channel);
-        for(let i = 0; i < oldData.length; i++){
-            newData[i] = oldData[i] * gainValue;
+    let mp3Data = [];
+    let blockSize = 1152;
+
+    for(let i=0;i<samples.length;i+=blockSize){
+        let chunk = samples.subarray(i, i+blockSize);
+        let adjusted = new Int16Array(chunk.length);
+
+        for(let j=0;j<chunk.length;j++){
+            let s = chunk[j] * gainValue;
+            s = Math.max(-1, Math.min(1, s));
+            adjusted[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
+
+        let mp3buf = mp3encoder.encodeBuffer(adjusted);
+        if(mp3buf.length > 0) mp3Data.push(mp3buf);
     }
 
-    // Convert to WAV
-    const wavBlob = bufferToWave(newBuffer, newBuffer.length);
-    const url = URL.createObjectURL(wavBlob);
+    let end = mp3encoder.flush();
+    if(end.length > 0) mp3Data.push(end);
 
-    const downloadLink = document.getElementById("downloadLink");
-    downloadLink.href = url;
-    downloadLink.download = "audio_-2dB.wav";
-    downloadLink.style.display = "block";
-    downloadLink.innerText = "⬇ Download -2dB Audio";
-}
+    let blob = new Blob(mp3Data, {type: 'audio/mp3'});
+    let url = URL.createObjectURL(blob);
 
-function bufferToWave(abuffer, len) {
-    const numOfChan = abuffer.numberOfChannels,
-        length = len * numOfChan * 2 + 44,
-        buffer = new ArrayBuffer(length),
-        view = new DataView(buffer),
-        channels = [],
-        sampleRate = abuffer.sampleRate;
-    let offset = 0;
-    let pos = 0;
-
-    function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
-    function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
-
-    setUint32(0x46464952);
-    setUint32(length - 8);
-    setUint32(0x45564157);
-
-    setUint32(0x20746d66);
-    setUint32(16);
-    setUint16(1);
-    setUint16(numOfChan);
-    setUint32(sampleRate);
-    setUint32(sampleRate * 2 * numOfChan);
-    setUint16(numOfChan * 2);
-    setUint16(16);
-
-    setUint32(0x61746164);
-    setUint32(length - pos - 4);
-
-    for (let i = 0; i < abuffer.numberOfChannels; i++)
-        channels.push(abuffer.getChannelData(i));
-
-    while (pos < length) {
-        for (let i = 0; i < numOfChan; i++) {
-            let sample = Math.max(-1, Math.min(1, channels[i][offset]));
-            sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-            view.setInt16(pos, sample, true);
-            pos += 2;
-        }
-        offset++;
-    }
-
-    return new Blob([buffer], { type: "audio/wav" });
+    let link = document.getElementById("downloadLink");
+    link.href = url;
+    link.download = "audio_-2dB.mp3";
+    link.style.display = "block";
+    link.innerText = "⬇ Download MP3 (-2 dB)";
 }
 </script>
 
