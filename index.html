@@ -3,9 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Audio Normalizer -2dB</title>
+<title>Audio Enhancer</title>
 
-<!-- MP3 Encoder -->
 <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
 
 <style>
@@ -20,7 +19,7 @@ body{
     background:#2f2f55;
     padding:30px;
     border-radius:15px;
-    max-width:500px;
+    max-width:550px;
     margin:auto;
 }
 button{
@@ -35,6 +34,45 @@ button{
 button:hover{
     background:#97AAEC;
 }
+
+/* Toggle Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 30px;
+  margin-top: 15px;
+}
+
+.switch input { display: none; }
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #444;
+  transition: .4s;
+  border-radius: 30px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 22px; width: 22px;
+  left: 4px; bottom: 4px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #628ED9;
+}
+
+input:checked + .slider:before {
+  transform: translateX(30px);
+}
+
 a{
     color:white;
     font-weight:bold;
@@ -45,9 +83,18 @@ a{
 <body>
 
 <div class="container">
-<h2>🎧 Normalize Audio to -2 dB (MP3 Output)</h2>
+<h2>🎧 Audio Enhancer</h2>
 
-<input type="file" id="audioFile" accept="audio/*"><br><br>
+<input type="file" id="audioFile" accept="audio/*"><br>
+
+<p>Distortion Fix</p>
+
+<label class="switch">
+  <input type="checkbox" id="fixToggle">
+  <span class="slider"></span>
+</label>
+
+<br><br>
 
 <button onclick="processAudio()">Process Audio</button>
 
@@ -63,47 +110,62 @@ async function processAudio(){
     const file = document.getElementById("audioFile").files[0];
     if(!file) return alert("Please upload an audio file first.");
 
+    const fixDistortion = document.getElementById("fixToggle").checked;
+
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const arrayBuffer = await file.arrayBuffer();
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-    // Find current peak
+    let samples = audioBuffer.getChannelData(0);
+
+    // === Normalize to -2 dB ===
     let max = 0;
-    for(let c = 0; c < audioBuffer.numberOfChannels; c++){
-        const data = audioBuffer.getChannelData(c);
-        for(let i = 0; i < data.length; i++){
-            max = Math.max(max, Math.abs(data[i]));
-        }
+    for(let i = 0; i < samples.length; i++){
+        max = Math.max(max, Math.abs(samples[i]));
     }
 
-    // Convert -2 dB to linear scale
     const targetLinear = Math.pow(10, -2 / 20);
     const gainValue = targetLinear / max;
 
-    // Use first channel (mono encoding for simplicity)
-    const samples = audioBuffer.getChannelData(0);
+    const processed = new Float32Array(samples.length);
 
+    for(let i = 0; i < samples.length; i++){
+        let s = samples[i] * gainValue;
+
+        if(fixDistortion){
+            // Soft limiter
+            s = Math.tanh(s * 1.5);
+
+            // Extra peak smoothing
+            if(Math.abs(s) > 0.85){
+                s *= 0.92;
+            }
+        }
+
+        processed[i] = s;
+    }
+
+    // === MP3 Encoding ===
     const mp3encoder = new lamejs.Mp3Encoder(
         1,
         audioBuffer.sampleRate,
-        192 // bitrate kbps
+        192
     );
 
     const mp3Data = [];
     const blockSize = 1152;
 
-    for(let i = 0; i < samples.length; i += blockSize){
+    for(let i = 0; i < processed.length; i += blockSize){
 
-        const chunk = samples.subarray(i, i + blockSize);
-        const adjusted = new Int16Array(chunk.length);
+        const chunk = processed.subarray(i, i + blockSize);
+        const intChunk = new Int16Array(chunk.length);
 
         for(let j = 0; j < chunk.length; j++){
-            let s = chunk[j] * gainValue;
-            s = Math.max(-1, Math.min(1, s));
-            adjusted[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            let s = Math.max(-1, Math.min(1, chunk[j]));
+            intChunk[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
 
-        const mp3buf = mp3encoder.encodeBuffer(adjusted);
+        const mp3buf = mp3encoder.encodeBuffer(intChunk);
         if(mp3buf.length > 0) mp3Data.push(mp3buf);
     }
 
@@ -115,9 +177,9 @@ async function processAudio(){
 
     const link = document.getElementById("downloadLink");
     link.href = url;
-    link.download = "normalized_-2dB.mp3";
+    link.download = "enhanced_-2dB.mp3";
     link.style.display = "block";
-    link.innerText = "⬇ Download MP3 (-2 dB)";
+    link.innerText = "⬇ Download Enhanced MP3";
 }
 </script>
 
